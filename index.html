@@ -186,10 +186,16 @@ ul,ol{list-style:none}
 .rbroker{font-size:11.5px;font-weight:700;color:var(--text-2)}
 .rdate{font-size:11.5px;font-weight:600;color:var(--text-3);font-variant-numeric:tabular-nums}
 .rqty{margin-left:auto;font-size:11.5px;font-weight:700;color:var(--text-2);font-variant-numeric:tabular-nums}
+.rdetail{
+  margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);
+  font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums;line-height:1.45;word-break:break-word;
+}
 .rnote{
   margin-top:7px;padding-top:7px;border-top:1px dashed var(--line);
   font-size:12px;font-weight:500;color:var(--text-2);word-break:break-word;white-space:pre-wrap;
 }
+.rdetail + .rnote{margin-top:5px;padding-top:0;border-top:0}
 .sellbtn{
   margin-top:9px;width:100%;height:34px;border:0;border-radius:9px;
   background:var(--accent-soft);color:var(--accent-ink);font-size:12.5px;font-weight:800;
@@ -335,7 +341,8 @@ ul,ol{list-style:none}
 .btn.danger-fill{background:var(--neg);border-color:var(--neg);color:#fff}
 
 /* form */
-.statusseg{margin:2px 0 4px}
+.statusseg{margin:2px 0 4px;width:100%}
+.statusseg .chip-sel{flex:1}
 .lbl{display:block;font-size:11.5px;font-weight:800;color:var(--text-3);letter-spacing:.01em;margin:12px 0 5px}
 .fld{display:block}
 .field{
@@ -839,17 +846,38 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     '</div>';
   }
 
+  /* 기록 카드의 상세 줄 — 공모가·주수·매도·수수료를 한 줄로 (자동 계산 기록만) */
+  function cardDetailHtml(r) {
+    if (r.mode !== 'auto') return '';
+    var c = calcAuto(r);
+    var parts = [];
+    if (c.ipo > 0) parts.push('공모가 ' + comma(c.ipo) + '원');
+    if (c.qty > 0) parts.push(c.qty + '주');
+    if (r.status === 'waiting') {
+      if (c.sub > 0) parts.push('청약수수료 ' + comma(c.sub) + '원');
+    } else {
+      if (c.sellAmount > 0) {
+        parts.push(r.sellMode === 'total'
+          ? '총매도 ' + comma(c.sellAmount) + '원'
+          : '매도 ' + comma(int(r.sellPrice)) + '원');
+      }
+      if (c.totalCost > 0) parts.push('수수료·세금 ' + comma(c.totalCost) + '원');
+    }
+    if (!parts.length) return '';
+    return '<div class="rdetail">' + parts.join(' · ') + '</div>';
+  }
+
   function cardHtml(r) {
     var waiting = r.status === 'waiting';
     var rate = recRate(r);
-    var qty = r.mode === 'auto' ? int(r.qty) : 0;
     var right = waiting
       ? '<span class="rwait">대기</span>'
       : '<span class="rprofit ' + cls(recProfit(r)) + '">' + won(recProfit(r)) + '</span>';
     var meta = waiting ? '' : '<span class="rchip sold">매도완료</span>';
+    /* 주수는 아래 상세 줄에 적으므로 여기서는 수익률만 (간편 입력은 값 없음) */
     var qtyHtml = '';
-    if (qty > 0) {
-      qtyHtml = '<span class="rqty">' + qty + '주' + (rate != null ? ' · ' + pct(rate) : '') + '</span>';
+    if (!waiting && r.mode === 'auto' && rate != null) {
+      qtyHtml = '<span class="rqty">' + pct(rate) + '</span>';
     } else if (!waiting && r.mode === 'quick') {
       qtyHtml = '<span class="rqty"></span>';
     }
@@ -861,6 +889,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
         '<span class="rdate">' + (waiting ? '상장 ' : '') + fmtDate(r.date) + '</span>' +
         qtyHtml +
       '</div>' +
+      cardDetailHtml(r) +
       (r.note ? '<div class="rnote">' + esc(r.note) + '</div>' : '') +
       (waiting ? '<button type="button" class="sellbtn" data-act="sellRecord" data-id="' + r.id + '">매도 완료 입력</button>' : '') +
     '</article>';
@@ -1048,7 +1077,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     }
     return {
       id: '', name: '', broker: BROKERS[0], status: 'sold', date: todayKey(), note: '',
-      mode: 'quick', ipoPrice: 0, qty: 0, sellMode: 'price', sellPrice: 0, sellTotal: 0,
+      mode: 'auto', ipoPrice: 0, qty: 0, sellMode: 'price', sellPrice: 0, sellTotal: 0,
       subFee: 2000, costMode: 'auto', sellCost: 0, profit: 0
     };
   }
@@ -1077,14 +1106,14 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       ' data-costmode="' + d.costMode + '"' +
       ' data-submode="' + subMode + '">';
 
-    h += '<div class="seg statusseg">' +
-      chipHtml('status', 'sold', '매도 완료', !isWaiting) +
-      chipHtml('status', 'waiting', '상장 대기', isWaiting) +
-      '</div>';
-
     h += '<label class="lbl" for="fName">종목명</label>' +
       '<input id="fName" class="field" name="name" value="' + esc(d.name) + '" maxlength="60"' +
       ' placeholder="종목명 입력" aria-label="종목명">';
+
+    h += '<span class="lbl">상태</span><div class="seg statusseg">' +
+      chipHtml('status', 'sold', '매도 완료', !isWaiting) +
+      chipHtml('status', 'waiting', '상장 대기', isWaiting) +
+      '</div>';
 
     h += '<label class="lbl" for="fDate"><span class="date-lbl">' + (isWaiting ? '상장일' : '매도일') + '</span></label>' +
       '<input id="fDate" class="field" type="date" name="date" value="' + esc(d.date) + '" aria-label="날짜">';
@@ -1097,10 +1126,10 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
         '<input class="field" name="brokerCustom" value="' + esc(customBroker) + '" maxlength="30"' +
         ' placeholder="증권사 이름 직접 입력" aria-label="증권사 직접 입력"></div>';
 
-    /* 입력 방식 */
+    /* 입력 방식 — 자동 계산이 기본, 간편 입력은 바로 옆에 */
     h += '<div class="seg modeseg">' +
-      '<button type="button" data-chip="mode" data-mode="quick" aria-pressed="' + (d.mode === 'quick') + '">간편 입력</button>' +
       '<button type="button" data-chip="mode" data-mode="auto" aria-pressed="' + (d.mode === 'auto') + '">자동 계산</button>' +
+      '<button type="button" data-chip="mode" data-mode="quick" aria-pressed="' + (d.mode === 'quick') + '">간편 입력</button>' +
       '</div>';
 
     /* 간편 입력 */
@@ -1261,7 +1290,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   function syncFormState(form) {
     var status = activeChip(form, 'status') || (sheet && sheet.rec && sheet.rec.status === 'waiting' ? 'waiting' : 'sold');
     form.dataset.status = status;
-    form.dataset.mode = status === 'waiting' ? 'auto' : (activeChip(form, 'mode') || 'quick');
+    form.dataset.mode = status === 'waiting' ? 'auto' : (activeChip(form, 'mode') || 'auto');
     form.dataset.sign = activeChip(form, 'sign') || 'profit';
     form.dataset.sellmode = activeChip(form, 'sellmode') || 'price';
     form.dataset.costmode = activeChip(form, 'costmode') || 'auto';
