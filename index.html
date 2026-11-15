@@ -373,7 +373,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
 .modeseg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(16,30,54,.10)}
 .custom-broker{display:none;margin-top:6px}
 .custom-broker.on{display:block}
-.sub-custom,.cost-manual{display:none;margin-top:6px}
+.cost-manual{display:none;margin-top:6px}
 /* 청약 증거금·청약 수량 나란히 */
 .tworow{display:flex;gap:7px}
 .tworow > .inrow{flex:1 1 0;min-width:0}
@@ -396,9 +396,6 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
 .recform[data-costmode="none"] .cost-manual{display:none}
 .cost-none-hint{display:none;padding-top:6px}
 .recform[data-costmode="none"] .cost-none-hint{display:block}
-.recform[data-submode="custom"] .sub-custom{display:flex}
-.recform[data-submode="custom"] .sub-note{display:none}
-.sub-note{display:block}
 
 /* live preview */
 .preview{
@@ -1109,11 +1106,12 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
         subFee: r.subFee, costMode: r.costMode, sellCost: r.sellCost, profit: r.profit
       };
     }
+    /* 새 기록의 수수료는 비워 둔다 — 적은 숫자 그대로가 수수료가 된다 (기본값 없음) */
     return {
       id: '', name: '', broker: BROKERS[0], status: 'sold', date: todayKey(), note: '',
       mode: 'auto', ipoPrice: 0, qty: 0, deposit: 0, refund: 0, subQty: 0,
       sellMode: 'deposit', sellPrice: 0, sellTotal: 0,
-      subFee: 2000, costMode: 'none', sellCost: 0, profit: 0
+      subFee: 0, costMode: 'none', sellCost: 0, profit: 0
     };
   }
 
@@ -1124,10 +1122,44 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
 
   function numValue(n) { return n ? comma(n) : ''; }
 
+  /* 매도 수수료·세금 칸 — 1주 매도가로 계산할 때만 보인다 (입금된 금액에는 이미 빠져 있음) */
+  function costBlockHtml(costMode, sellCost) {
+    return '<span class="lbl">매도 수수료·세금</span>' +
+      '<div class="chiprow">' +
+        chipHtml('costmode', 'none', '이미 차감됨', costMode === 'none') +
+        chipHtml('costmode', 'auto', '자동 0.2%', costMode === 'auto') +
+        chipHtml('costmode', 'manual', '직접 입력', costMode === 'manual') +
+      '</div>' +
+      '<div class="inrow cost-manual"><input class="field" name="sellCost" inputmode="numeric" value="' +
+        numValue(sellCost) + '" placeholder="0" aria-label="매도 수수료·세금">' +
+        '<span class="unit">원</span></div>' +
+      '<p class="hint cost-none-hint">입금된 금액에 수수료·세금이 이미 빠져 있어요.</p>';
+  }
+
+  /* 매도·입금 방식에 따라 매도 수수료·세금 칸을 붙였다 뗐다 한다 (칸 자체를 그리지 않는다) */
+  function syncCostBlock(form) {
+    var box = form.querySelector('.blk-cost');
+    if (!box) return;
+    var priceMode = form.dataset.sellmode === 'price';
+    if (!priceMode && form.dataset.costkeep !== '1') {
+      if (box.innerHTML) box.innerHTML = '';
+      form.dataset.costmode = 'none';
+      return;
+    }
+    var active = form.dataset.costmode || 'auto';
+    if (!box.querySelector('[data-chip="costmode"]')) {
+      box.innerHTML = costBlockHtml(active, int(form.dataset.sellcost || 0));
+    }
+    Array.prototype.forEach.call(box.querySelectorAll('[data-chip="costmode"]'), function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.costmode === active));
+    });
+  }
+
   function sheetRecord() {
     var d = sheet.rec;
     var editing = !!sheet.recId;
-    var subMode = d.subFee === 0 ? '0' : (d.subFee === 1500 ? '1500' : (d.subFee === 2000 ? '2000' : 'custom'));
+    /* 수수료는 적은 숫자 그대로 — 칩 없이 한 칸에 직접 적는다 (새 기록은 빈 칸) */
+    var subFeeVal = d.subFee ? String(int(d.subFee)) : '';
     var sellMode = d.sellMode === 'price' ? 'price' : 'deposit';
     var costMode = d.costMode === 'manual' ? 'manual' : (d.costMode === 'auto' ? 'auto' : 'none');
     var sign = int(d.profit) < 0 ? 'loss' : 'profit';
@@ -1141,7 +1173,9 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       ' data-sign="' + sign + '"' +
       ' data-sellmode="' + d.sellMode + '"' +
       ' data-costmode="' + d.costMode + '"' +
-      ' data-submode="' + subMode + '">';
+      ' data-costkeep="' + (sellMode === 'deposit' && d.costMode !== 'none' ? '1' : '0') + '"' +
+      ' data-sellcost="' + Math.max(0, int(d.sellCost)) + '"' +
+      ' data-submode="' + (d.subFee ? 'custom' : '0') + '">';
 
     h += '<label class="lbl" for="fName">종목명</label>' +
       '<input id="fName" class="field" name="name" value="' + esc(d.name) + '" maxlength="60"' +
@@ -1194,16 +1228,9 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
         '<div class="inrow"><input class="field" name="refund" inputmode="numeric" value="' + numValue(d.refund) +
           '" placeholder="환불 금액" aria-label="환불 금액"><span class="unit">원</span></div>' +
       '</div>' +
-      '<span class="lbl">청약 수수료</span>' +
-      '<div class="chiprow">' +
-        chipHtml('submode', '0', '0원', subMode === '0') +
-        chipHtml('submode', '1500', '1,500원', subMode === '1500') +
-        chipHtml('submode', '2000', '2,000원', subMode === '2000') +
-        chipHtml('submode', 'custom', '직접 입력', subMode === 'custom') +
-      '</div>' +
-      '<div class="inrow sub-custom"><input class="field" name="subFeeCustom" inputmode="numeric" value="' +
-        (subMode === 'custom' ? comma(d.subFee) : '') + '" placeholder="0" aria-label="청약 수수료 직접 입력">' +
-        '<span class="unit">원</span></div>' +
+      '<label class="lbl" for="fSubFee">수수료</label>' +
+      '<div class="inrow"><input id="fSubFee" class="field" name="subFee" inputmode="numeric" value="' +
+        esc(subFeeVal) + '" placeholder="0" aria-label="수수료"><span class="unit">원</span></div>' +
       '<span class="lbl">청약 수량 (선택)</span>' +
       '<div class="inrow"><input class="field" name="subQty" inputmode="numeric" value="' + numValue(d.subQty) +
         '" placeholder="0" aria-label="청약 수량"><span class="unit">주</span></div>';
@@ -1220,16 +1247,10 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       '<div class="inrow only-price"><input class="field" name="sellPrice" inputmode="numeric" value="' +
         numValue(d.sellPrice) + '" placeholder="1주 매도가" aria-label="1주 매도가">' +
         '<span class="unit">원</span></div>' +
-      '<span class="lbl">매도 수수료·세금</span>' +
-      '<div class="chiprow">' +
-        chipHtml('costmode', 'none', '이미 차감됨', costMode === 'none') +
-        chipHtml('costmode', 'auto', '자동 0.2%', costMode === 'auto') +
-        chipHtml('costmode', 'manual', '직접 입력', costMode === 'manual') +
+      /* 입금된 금액(실수령)에는 매도 수수료·세금 칸을 두지 않는다 — 두 번 빼지 않게 */
+      '<div class="blk-cost">' +
+        (sellMode === 'price' || d.costMode !== 'none' ? costBlockHtml(costMode, d.sellCost) : '') +
       '</div>' +
-      '<div class="inrow cost-manual"><input class="field" name="sellCost" inputmode="numeric" value="' +
-        numValue(d.sellCost) + '" placeholder="0" aria-label="매도 수수료·세금">' +
-        '<span class="unit">원</span></div>' +
-      '<p class="hint cost-none-hint">입금된 금액에 수수료·세금이 이미 빠져 있어요.</p>' +
     '</div></div>';
 
     h += '<div class="preview" id="calcPreview"></div>';
@@ -1279,8 +1300,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       sellMode: form.dataset.sellmode === 'price' ? 'price' : 'deposit',
       sellPrice: Math.max(0, int(f('sellPrice'))),
       sellTotal: Math.max(0, int(f('sellTotal'))),
-      subFee: form.dataset.submode === 'custom' ? Math.max(0, int(f('subFeeCustom')))
-        : (form.dataset.submode === '0' ? 0 : (form.dataset.submode === '1500' ? 1500 : 2000)),
+      subFee: Math.max(0, int(f('subFee'))),
       costMode: form.dataset.costmode === 'manual' ? 'manual' : (form.dataset.costmode === 'auto' ? 'auto' : 'none'),
       sellCost: Math.max(0, int(f('sellCost'))),
       profit: 0
@@ -1316,7 +1336,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
         (cw.deposit > 0 ? '<div class="pvrow"><span>청약 증거금</span><b>' + wonPlain(cw.deposit) + '</b></div>' : '') +
         (cw.refund > 0 ? '<div class="pvrow"><span>환불 금액</span><b>' + wonPlain(cw.refund) + '</b></div>' : '') +
         '<div class="pvrow"><span>' + invLabel + '</span><b>' + wonPlain(inv) + '</b></div>' +
-        '<div class="pvrow"><span>청약 수수료</span><b>' + wonPlain(r.subFee) + '</b></div>' +
+        '<div class="pvrow"><span>수수료</span><b>' + wonPlain(r.subFee) + '</b></div>' +
         '<div class="pvtotal"><span>투입금액</span><b>' + wonPlain(inv + r.subFee) + '</b></div>' +
         '<p class="pvhint">매도하고 「매도 완료 입력」을 누르면 이익이 확정돼요.</p>';
       sum = '<span class="fsl">투입금액</span><b>' + wonPlain(inv + r.subFee) + '</b>' +
@@ -1355,8 +1375,11 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       '<div class="pvrow"><span>' + (r.sellMode === 'price' ? '매도금액' : '입금된 금액') + '</span><b>' +
         wonPlain(c.sellAmount) + '</b></div>' +
       '<div class="pvrow"><span>세전차익</span><b class="' + cls(c.gross) + '">' + won(c.gross) + '</b></div>' +
-      '<div class="pvrow"><span>비용합계 (청약 ' + wonPlain(c.sub) + ' + 매도 ' + wonPlain(c.cost) + ')</span><b>' +
-        wonPlain(c.totalCost) + '</b></div>' +
+      '<div class="pvrow">' +
+        (c.cost > 0
+          ? '<span>비용합계 (청약 ' + wonPlain(c.sub) + ' + 매도 ' + wonPlain(c.cost) + ')</span><b>' + wonPlain(c.totalCost) + '</b>'
+          : '<span>수수료</span><b>' + wonPlain(c.sub) + '</b>') +
+      '</div>' +
       '<div class="pvtotal"><span>최종이익</span><b class="' + cls(c.profit) + '">' + won(c.profit) + '</b></div>' +
       '<div class="pvrow" style="padding-top:5px"><span>수익률</span>' +
         '<span class="pvrate ' + cls(c.rate == null ? 0 : c.rate) + '">' + pct(c.rate) +
@@ -1372,8 +1395,11 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     form.dataset.mode = status === 'waiting' ? 'auto' : (activeChip(form, 'mode') || 'auto');
     form.dataset.sign = activeChip(form, 'sign') || 'profit';
     form.dataset.sellmode = activeChip(form, 'sellmode') || 'deposit';
-    form.dataset.costmode = activeChip(form, 'costmode') || 'none';
-    form.dataset.submode = activeChip(form, 'submode') || '2000';
+    /* 매도·입금 방식에 맞춰 매도 수수료·세금 칸을 붙이거나 없앤 뒤 그 칸의 선택값을 읽는다 */
+    syncCostBlock(form);
+    form.dataset.costmode = activeChip(form, 'costmode') || form.dataset.costmode || 'none';
+    var feeEl = form.querySelector('[name="subFee"]');
+    form.dataset.submode = feeEl && String(feeEl.value).trim() !== '' ? 'custom' : '0';
     var broker = activeChip(form, 'broker') || BROKERS[0];
     var cb = form.querySelector('.custom-broker');
     if (cb) cb.classList.toggle('on', broker === '기타');
@@ -1722,8 +1748,12 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     });
     var form = btn.closest('form');
     if (form && group === 'sellmode') {
-      /* 입금된 금액은 이미 수수료·세금이 빠진 값 → 알맞은 매도 비용 방식을 같이 골라 준다 */
-      pressChip(form, 'costmode', btn.dataset.sellmode === 'price' ? 'auto' : 'none');
+      /* 입금된 금액은 이미 수수료·세금이 빠진 값 → 매도 수수료·세금 칸을 없애고 비용 0원 */
+      form.dataset.costkeep = '0';
+      form.dataset.costmode = btn.dataset.sellmode === 'price' ? 'auto' : 'none';
+    }
+    if (form && group === 'costmode') {
+      form.dataset.costmode = btn.dataset.costmode;
     }
     if (form) syncFormState(form);
   }
@@ -1754,6 +1784,12 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   document.addEventListener('input', function (e) {
     var form = e.target.closest ? e.target.closest('#recordForm') : null;
     if (!form) return;
+    if (e.target.name === 'subFee') {
+      form.dataset.submode = String(e.target.value).trim() !== '' ? 'custom' : '0';
+    }
+    if (e.target.name === 'sellCost') {
+      form.dataset.sellcost = String(Math.max(0, int(e.target.value)));
+    }
     if (e.target.name === 'profit' && String(e.target.value).trim().charAt(0) === '-') {
       var loss = form.querySelector('[data-chip="sign"][data-sign="loss"]');
       if (loss && loss.getAttribute('aria-pressed') !== 'true') {
