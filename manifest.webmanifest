@@ -1,6 +1,6 @@
 {
-  "name": "공모주 가계부",
-  "short_name": "공모주 가계부",
+  "name": "민정의 공모주 가계부",
+  "short_name": "민정의 공모주 가계부",
   "description": "공모주 매도 수익을 기록하는 가계부. 최종이익 자동 계산, 월별·증권사별 통계, JSON·CSV 백업. 광고 없이 기기에 저장됩니다.",
   "lang": "ko",
   "dir": "ltr",
@@ -20,25 +20,25 @@
   ],
   "icons": [
     {
-      "src": "icon-192.png?v=1",
+      "src": "icon-192.png?v=6",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icon-192.png?v=1",
+      "src": "icon-192.png?v=6",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "icon-512.png?v=1",
+      "src": "icon-512.png?v=6",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icon-512.png?v=1",
+      "src": "icon-512.png?v=6",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
