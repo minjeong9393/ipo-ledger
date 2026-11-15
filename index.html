@@ -1726,19 +1726,6 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   /* ------------------------------------------------------------------ *
    *  이벤트
    * ------------------------------------------------------------------ */
-  function pressChip(form, group, value) {
-    if (!form) return false;
-    var b = form.querySelector('[data-chip="' + group + '"][data-' + group + '="' + value + '"]');
-    if (!b) return false;
-    var row = b.parentNode;
-    if (row) {
-      Array.prototype.forEach.call(row.querySelectorAll('[data-chip="' + group + '"]'), function (x) {
-        x.setAttribute('aria-pressed', String(x === b));
-      });
-    }
-    return true;
-  }
-
   function onChip(btn) {
     var group = btn.dataset.chip;
     var row = btn.parentNode;
