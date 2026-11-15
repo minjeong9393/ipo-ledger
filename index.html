@@ -374,6 +374,11 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
 .custom-broker{display:none;margin-top:6px}
 .custom-broker.on{display:block}
 .sub-custom,.cost-manual{display:none;margin-top:6px}
+/* 청약 증거금·청약 수량 나란히 */
+.tworow{display:flex;gap:7px}
+.tworow > .inrow{flex:1 1 0;min-width:0}
+.tworow .field{padding-left:10px;padding-right:34px}
+.tworow .unit{right:10px;font-size:11.5px}
 .date-lbl{display:inline}
 .blk-sold-quick{display:block}
 .recform[data-mode="quick"] .preview{display:none}
@@ -385,9 +390,12 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
 .recform[data-status="sold"][data-mode="quick"] .blk-auto{display:none}
 .recform[data-status="sold"][data-mode="auto"] .blk-sold-quick{display:none}
 .recform[data-sellmode="price"] .only-total{display:none}
-.recform[data-sellmode="total"] .only-price{display:none}
+.recform[data-sellmode="deposit"] .only-price{display:none}
 .recform[data-costmode="manual"] .cost-manual{display:flex}
 .recform[data-costmode="auto"] .cost-manual{display:none}
+.recform[data-costmode="none"] .cost-manual{display:none}
+.cost-none-hint{display:none;padding-top:6px}
+.recform[data-costmode="none"] .cost-none-hint{display:block}
 .recform[data-submode="custom"] .sub-custom{display:flex}
 .recform[data-submode="custom"] .sub-note{display:none}
 .sub-note{display:block}
@@ -468,11 +476,11 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
    *  상수
    * ------------------------------------------------------------------ */
   var STORE_KEY = 'ipo_ledger_v1';
-  var APP_VER = '1.0.0';
+  var APP_VER = '1.2.0';
   /* 매도 수수료·세금 자동 계산 기본값 (0.2%) */
   var COST_RATE = 0.002;
 
-  var BROKERS = ['미래에셋', '삼성', '한국투자', 'KB', 'NH', '키움', '신한', '하나', '토스', '대신', '유안타'];
+  var BROKERS = ['미래에셋', '삼성', '한국투자', 'KB', 'NH', '나무', '키움', '신한', '하나', '토스', '대신', '유안타'];
 
   /* 배포본에서는 false 로 바뀐다 (build_deploy.py) */
   var WITH_SAMPLE = false; /* @sample */
@@ -503,11 +511,12 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     return (n > 0 ? '+' : '-') + comma(n) + '원';
   }
   function wonPlain(n) { n = Math.round(Number(n) || 0); return (n < 0 ? '-' : '') + comma(n) + '원'; }
+  /* 수익률은 소수 둘째 자리까지 (구글 시트와 같은 표기: 99.58% / -6.80%) */
   function pct(v) {
     if (v == null || !isFinite(v)) return '—';
-    var r = Math.round(Math.abs(v) * 10) / 10;
-    if (r < 0.05) return '0.0%';
-    return (v > 0 ? '+' : '-') + r.toFixed(1) + '%';
+    var s = Math.abs(v).toFixed(2);
+    if (Number(s) === 0) return '0.00%';
+    return (v > 0 ? '+' : '-') + s + '%';
   }
   function num(v) {
     if (typeof v === 'number') return isFinite(v) ? v : 0;
@@ -530,30 +539,38 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   function uidMonth(k) { return Number(String(k).slice(5, 7)); }
 
   /* ------------------------------------------------------------------ *
-   *  계산
-   *    매수금액 = 공모가 × 주수
-   *    매도금액 = 매도가 × 주수 (또는 총 매도금액)
-   *    세전차익 = 매도금액 − 매수금액
-   *    비용합계 = 청약 수수료 + 매도 수수료·세금
-   *    최종이익 = 세전차익 − 비용합계
-   *    수익률   = 최종이익 ÷ (매수금액 + 청약 수수료) × 100
+   *  계산 — 구글 시트 「공모주 가계부」와 같은 식
+   *    매수금액   = 1주당 가격 × 배정 수량
+   *    매도/입금   = 입금된 금액(실수령)  또는  1주 매도가 × 배정 수량
+   *    매도 비용   = 이미 차감됨(0원) / 자동 0.2% / 직접 입력
+   *    세전차익   = 매도금액 − 매수금액
+   *    비용합계   = 청약 수수료 + 매도 비용
+   *    최종이익   = 세전차익 − 비용합계
+   *    수익률     = 최종이익 ÷ (매수금액 + 청약 수수료) × 100
+   *    환불 금액   = 청약 증거금 − 매수금액 (0원보다 작으면 0원)
    * ------------------------------------------------------------------ */
   function calcAuto(r) {
     var ipo = Math.max(0, int(r.ipoPrice));
     var qty = Math.max(0, int(r.qty));
     var buy = ipo * qty;
+    var deposit = Math.max(0, int(r.deposit));
+    var subQty = Math.max(0, int(r.subQty));
+    /* 청약 증거금에서 배정된 몫을 빼고 돌려받는 금액 (수수료 차감 전) */
+    var refund = (deposit > 0 && buy > 0) ? Math.max(0, deposit - buy) : 0;
     var sellAmount = Math.round(
-      r.sellMode === 'total' ? Math.max(0, int(r.sellTotal)) : Math.max(0, int(r.sellPrice)) * qty
+      r.sellMode === 'price' ? Math.max(0, int(r.sellPrice)) * qty : Math.max(0, int(r.sellTotal))
     );
     var sub = Math.max(0, int(r.subFee));
-    var cost = r.costMode === 'manual' ? Math.max(0, int(r.sellCost)) : Math.round(sellAmount * COST_RATE);
+    var cost = r.costMode === 'none' ? 0
+      : (r.costMode === 'manual' ? Math.max(0, int(r.sellCost)) : Math.round(sellAmount * COST_RATE));
     var gross = sellAmount - buy;
     var totalCost = sub + cost;
     var profit = gross - totalCost;
     var invest = buy + sub;
     var rate = invest > 0 ? (profit / invest) * 100 : null;
     return {
-      buy: buy, qty: qty, ipo: ipo, sellAmount: sellAmount, sub: sub, cost: cost,
+      buy: buy, qty: qty, ipo: ipo, deposit: deposit, subQty: subQty, refund: refund,
+      sellAmount: sellAmount, sub: sub, cost: cost,
       gross: gross, totalCost: totalCost, profit: profit, invest: invest, rate: rate
     };
   }
@@ -589,11 +606,14 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     r.mode = raw.mode === 'auto' ? 'auto' : 'quick';
     r.ipoPrice = Math.max(0, int(raw.ipoPrice));
     r.qty = Math.max(0, int(raw.qty));
-    r.sellMode = raw.sellMode === 'total' ? 'total' : 'price';
+    r.deposit = Math.max(0, int(raw.deposit));
+    r.subQty = Math.max(0, int(raw.subQty));
+    /* 'total'(옛 총 매도금액)도 입금된 금액으로 본다 — costMode 가 그대로면 계산이 바뀌지 않는다 */
+    r.sellMode = raw.sellMode === 'price' ? 'price' : 'deposit';
     r.sellPrice = Math.max(0, int(raw.sellPrice));
     r.sellTotal = Math.max(0, int(raw.sellTotal));
     r.subFee = Math.max(0, int(raw.subFee));
-    r.costMode = raw.costMode === 'manual' ? 'manual' : 'auto';
+    r.costMode = raw.costMode === 'manual' ? 'manual' : (raw.costMode === 'none' ? 'none' : 'auto');
     r.sellCost = Math.max(0, int(raw.sellCost));
     r.profit = int(raw.profit);
     r.createdAt = Number(raw.createdAt) || Date.now();
@@ -604,7 +624,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       r.sellPrice = 0;
       r.sellTotal = 0;
       r.sellCost = 0;
-      r.costMode = 'auto';
+      r.costMode = 'none';
     } else if (r.mode === 'auto') {
       r.profit = calcAuto(r).profit;
     }
@@ -846,22 +866,24 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     '</div>';
   }
 
-  /* 기록 카드의 상세 줄 — 공모가·주수·매도·수수료를 한 줄로 (자동 계산 기록만) */
+  /* 기록 카드의 상세 줄 — 1주당 가격·수량·입금·수수료·환불을 한 줄로 (자동 계산 기록만) */
   function cardDetailHtml(r) {
     if (r.mode !== 'auto') return '';
     var c = calcAuto(r);
     var parts = [];
-    if (c.ipo > 0) parts.push('공모가 ' + comma(c.ipo) + '원');
+    if (c.ipo > 0) parts.push('1주당 ' + comma(c.ipo) + '원');
     if (c.qty > 0) parts.push(c.qty + '주');
     if (r.status === 'waiting') {
+      if (c.deposit > 0) parts.push('청약증거금 ' + comma(c.deposit) + '원');
       if (c.sub > 0) parts.push('청약수수료 ' + comma(c.sub) + '원');
     } else {
       if (c.sellAmount > 0) {
-        parts.push(r.sellMode === 'total'
-          ? '총매도 ' + comma(c.sellAmount) + '원'
-          : '매도 ' + comma(int(r.sellPrice)) + '원');
+        parts.push(r.sellMode === 'price'
+          ? '매도 ' + comma(int(r.sellPrice)) + '원'
+          : '입금 ' + comma(c.sellAmount) + '원');
       }
-      if (c.totalCost > 0) parts.push('수수료·세금 ' + comma(c.totalCost) + '원');
+      if (c.totalCost > 0) parts.push('수수료 ' + comma(c.totalCost) + '원');
+      if (c.refund > 0) parts.push('환불 ' + comma(c.refund) + '원');
     }
     if (!parts.length) return '';
     return '<div class="rdetail">' + parts.join(' · ') + '</div>';
@@ -1070,15 +1092,16 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     if (r) {
       return {
         id: r.id, name: r.name, broker: r.broker, status: r.status, date: r.date, note: r.note,
-        mode: r.mode, ipoPrice: r.ipoPrice, qty: r.qty, sellMode: r.sellMode,
-        sellPrice: r.sellPrice, sellTotal: r.sellTotal, subFee: r.subFee,
+        mode: r.mode, ipoPrice: r.ipoPrice, qty: r.qty, deposit: r.deposit, subQty: r.subQty,
+        sellMode: r.sellMode, sellPrice: r.sellPrice, sellTotal: r.sellTotal, subFee: r.subFee,
         costMode: r.costMode, sellCost: r.sellCost, profit: r.profit
       };
     }
     return {
       id: '', name: '', broker: BROKERS[0], status: 'sold', date: todayKey(), note: '',
-      mode: 'auto', ipoPrice: 0, qty: 0, sellMode: 'price', sellPrice: 0, sellTotal: 0,
-      subFee: 2000, costMode: 'auto', sellCost: 0, profit: 0
+      mode: 'auto', ipoPrice: 0, qty: 0, deposit: 0, subQty: 0,
+      sellMode: 'deposit', sellPrice: 0, sellTotal: 0,
+      subFee: 2000, costMode: 'none', sellCost: 0, profit: 0
     };
   }
 
@@ -1092,7 +1115,9 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   function sheetRecord() {
     var d = sheet.rec;
     var editing = !!sheet.recId;
-    var subMode = d.subFee === 0 ? '0' : (d.subFee === 2000 ? '2000' : 'custom');
+    var subMode = d.subFee === 0 ? '0' : (d.subFee === 1500 ? '1500' : (d.subFee === 2000 ? '2000' : 'custom'));
+    var sellMode = d.sellMode === 'price' ? 'price' : 'deposit';
+    var costMode = d.costMode === 'manual' ? 'manual' : (d.costMode === 'auto' ? 'auto' : 'none');
     var sign = int(d.profit) < 0 ? 'loss' : 'profit';
     var brokerPick = BROKERS.indexOf(d.broker) >= 0 ? d.broker : '기타';
     var customBroker = brokerPick === '기타' && BROKERS.indexOf(d.broker) < 0 ? d.broker : '';
@@ -1115,7 +1140,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       chipHtml('status', 'waiting', '상장 대기', isWaiting) +
       '</div>';
 
-    h += '<label class="lbl" for="fDate"><span class="date-lbl">' + (isWaiting ? '상장일' : '매도일') + '</span></label>' +
+    h += '<label class="lbl" for="fDate"><span class="date-lbl">' + (isWaiting ? '상장일' : '날짜 (청약/매도일)') + '</span></label>' +
       '<input id="fDate" class="field" type="date" name="date" value="' + esc(d.date) + '" aria-label="날짜">';
 
     h += '<span class="lbl">증권사</span><div class="chiprow">' +
@@ -1145,44 +1170,57 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       '<p class="hint">수수료·세금까지 빼고 실제로 남은 금액을 그대로 적어 주세요.</p>' +
     '</div>';
 
-    /* 자동 계산 */
+    /* 자동 계산 — 구글 시트와 같은 칸 */
     h += '<div class="blk-auto">' +
-      '<span class="lbl">공모가</span>' +
+      '<span class="lbl">1주당 가격 (공모가)</span>' +
       '<div class="inrow"><input class="field" name="ipoPrice" inputmode="numeric" value="' + numValue(d.ipoPrice) +
-        '" placeholder="0" aria-label="공모가(원)"><span class="unit">원</span></div>' +
-      '<span class="lbl">배정 주수</span>' +
+        '" placeholder="0" aria-label="1주당 가격">' +
+        '<span class="unit">원</span></div>' +
+      '<span class="lbl">배정 수량</span>' +
       '<div class="inrow"><input class="field" name="qty" inputmode="numeric" value="' + numValue(d.qty) +
-        '" placeholder="0" aria-label="배정 주수"><span class="unit">주</span></div>' +
+        '" placeholder="0" aria-label="배정 수량"><span class="unit">주</span></div>' +
       '<span class="lbl">청약 수수료</span>' +
       '<div class="chiprow">' +
         chipHtml('submode', '0', '0원', subMode === '0') +
+        chipHtml('submode', '1500', '1,500원', subMode === '1500') +
         chipHtml('submode', '2000', '2,000원', subMode === '2000') +
         chipHtml('submode', 'custom', '직접 입력', subMode === 'custom') +
       '</div>' +
       '<div class="inrow sub-custom"><input class="field" name="subFeeCustom" inputmode="numeric" value="' +
         (subMode === 'custom' ? comma(d.subFee) : '') + '" placeholder="0" aria-label="청약 수수료 직접 입력">' +
-        '<span class="unit">원</span></div>';
+        '<span class="unit">원</span></div>' +
+      '<span class="lbl">청약 증거금 · 청약 수량 (선택)</span>' +
+      '<div class="tworow">' +
+        '<div class="inrow"><input class="field" name="deposit" inputmode="numeric" value="' + numValue(d.deposit) +
+          '" placeholder="청약 증거금" aria-label="청약 증거금">' +
+          '<span class="unit">원</span></div>' +
+        '<div class="inrow"><input class="field" name="subQty" inputmode="numeric" value="' + numValue(d.subQty) +
+          '" placeholder="청약 수량" aria-label="청약 수량">' +
+          '<span class="unit">주</span></div>' +
+      '</div>';
 
     h += '<div class="only-sold-auto">' +
-      '<span class="lbl">매도 금액</span>' +
+      '<span class="lbl">매도·입금 금액</span>' +
       '<div class="chiprow">' +
-        chipHtml('sellmode', 'price', '매도가로 입력', d.sellMode === 'price') +
-        chipHtml('sellmode', 'total', '총 매도금액', d.sellMode === 'total') +
+        chipHtml('sellmode', 'deposit', '입금된 금액 (실수령)', sellMode === 'deposit') +
+        chipHtml('sellmode', 'price', '1주 매도가로 계산', sellMode === 'price') +
       '</div>' +
+      '<div class="inrow only-total"><input class="field" name="sellTotal" inputmode="numeric" value="' +
+        numValue(d.sellTotal) + '" placeholder="입금된 금액" aria-label="입금된 금액">' +
+        '<span class="unit">원</span></div>' +
       '<div class="inrow only-price"><input class="field" name="sellPrice" inputmode="numeric" value="' +
         numValue(d.sellPrice) + '" placeholder="1주 매도가" aria-label="1주 매도가">' +
         '<span class="unit">원</span></div>' +
-      '<div class="inrow only-total"><input class="field" name="sellTotal" inputmode="numeric" value="' +
-        numValue(d.sellTotal) + '" placeholder="총 매도금액" aria-label="총 매도금액">' +
-        '<span class="unit">원</span></div>' +
       '<span class="lbl">매도 수수료·세금</span>' +
       '<div class="chiprow">' +
-        chipHtml('costmode', 'auto', '자동 0.2%', d.costMode === 'auto') +
-        chipHtml('costmode', 'manual', '직접 입력', d.costMode === 'manual') +
+        chipHtml('costmode', 'none', '이미 차감됨', costMode === 'none') +
+        chipHtml('costmode', 'auto', '자동 0.2%', costMode === 'auto') +
+        chipHtml('costmode', 'manual', '직접 입력', costMode === 'manual') +
       '</div>' +
       '<div class="inrow cost-manual"><input class="field" name="sellCost" inputmode="numeric" value="' +
         numValue(d.sellCost) + '" placeholder="0" aria-label="매도 수수료·세금">' +
         '<span class="unit">원</span></div>' +
+      '<p class="hint cost-none-hint">입금된 금액에 수수료·세금이 이미 빠져 있어요.</p>' +
     '</div></div>';
 
     h += '<div class="preview" id="calcPreview"></div>';
@@ -1222,12 +1260,14 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       mode: mode,
       ipoPrice: Math.max(0, int(f('ipoPrice'))),
       qty: Math.max(0, int(f('qty'))),
-      sellMode: form.dataset.sellmode === 'total' ? 'total' : 'price',
+      deposit: Math.max(0, int(f('deposit'))),
+      subQty: Math.max(0, int(f('subQty'))),
+      sellMode: form.dataset.sellmode === 'price' ? 'price' : 'deposit',
       sellPrice: Math.max(0, int(f('sellPrice'))),
       sellTotal: Math.max(0, int(f('sellTotal'))),
       subFee: form.dataset.submode === 'custom' ? Math.max(0, int(f('subFeeCustom')))
-        : (form.dataset.submode === '0' ? 0 : 2000),
-      costMode: form.dataset.costmode === 'manual' ? 'manual' : 'auto',
+        : (form.dataset.submode === '0' ? 0 : (form.dataset.submode === '1500' ? 1500 : 2000)),
+      costMode: form.dataset.costmode === 'manual' ? 'manual' : (form.dataset.costmode === 'auto' ? 'auto' : 'none'),
       sellCost: Math.max(0, int(f('sellCost'))),
       profit: 0
     };
@@ -1237,7 +1277,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       rec.sellPrice = 0;
       rec.sellTotal = 0;
       rec.sellCost = 0;
-      rec.costMode = 'auto';
+      rec.costMode = 'none';
     } else if (mode === 'quick') {
       var sign = form.dataset.sign === 'loss' ? -1 : 1;
       rec.profit = sign * Math.abs(int(f('profit')));
@@ -1257,6 +1297,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       var inv = r.ipoPrice * r.qty;
       box.innerHTML = '<span class="pvlab">상장 대기</span>' +
         '<div class="pvrow"><span>공모 배정 금액</span><b>' + wonPlain(inv) + '</b></div>' +
+        (r.deposit > 0 ? '<div class="pvrow"><span>청약 증거금</span><b>' + wonPlain(r.deposit) + '</b></div>' : '') +
         '<div class="pvrow"><span>청약 수수료</span><b>' + wonPlain(r.subFee) + '</b></div>' +
         '<div class="pvtotal"><span>투입금액</span><b>' + wonPlain(inv + r.subFee) + '</b></div>' +
         '<p class="pvhint">매도하고 「매도 완료 입력」을 누르면 이익이 확정돼요.</p>';
@@ -1273,9 +1314,16 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       return;
     }
     var c = calcAuto(r);
+    var depRows = '';
+    if (c.deposit > 0) {
+      depRows += '<div class="pvrow"><span>청약 증거금</span><b>' + wonPlain(c.deposit) + '</b></div>';
+      if (c.refund > 0) depRows += '<div class="pvrow"><span>환불 금액</span><b>' + wonPlain(c.refund) + '</b></div>';
+    }
     box.innerHTML = '<span class="pvlab">자동 계산</span>' +
-      '<div class="pvrow"><span>매수금액</span><b>' + wonPlain(c.buy) + '</b></div>' +
-      '<div class="pvrow"><span>매도금액</span><b>' + wonPlain(c.sellAmount) + '</b></div>' +
+      '<div class="pvrow"><span>매수금액 (1주당 ' + wonPlain(c.ipo) + ' × ' + c.qty + '주)</span><b>' + wonPlain(c.buy) + '</b></div>' +
+      '<div class="pvrow"><span>' + (r.sellMode === 'price' ? '매도금액' : '입금된 금액') + '</span><b>' +
+        wonPlain(c.sellAmount) + '</b></div>' +
+      depRows +
       '<div class="pvrow"><span>세전차익</span><b class="' + cls(c.gross) + '">' + won(c.gross) + '</b></div>' +
       '<div class="pvrow"><span>비용합계 (청약 ' + wonPlain(c.sub) + ' + 매도 ' + wonPlain(c.cost) + ')</span><b>' +
         wonPlain(c.totalCost) + '</b></div>' +
@@ -1292,14 +1340,14 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     form.dataset.status = status;
     form.dataset.mode = status === 'waiting' ? 'auto' : (activeChip(form, 'mode') || 'auto');
     form.dataset.sign = activeChip(form, 'sign') || 'profit';
-    form.dataset.sellmode = activeChip(form, 'sellmode') || 'price';
-    form.dataset.costmode = activeChip(form, 'costmode') || 'auto';
+    form.dataset.sellmode = activeChip(form, 'sellmode') || 'deposit';
+    form.dataset.costmode = activeChip(form, 'costmode') || 'none';
     form.dataset.submode = activeChip(form, 'submode') || '2000';
     var broker = activeChip(form, 'broker') || BROKERS[0];
     var cb = form.querySelector('.custom-broker');
     if (cb) cb.classList.toggle('on', broker === '기타');
     var dl = form.querySelector('.date-lbl');
-    if (dl) dl.textContent = status === 'waiting' ? '상장일' : '매도일';
+    if (dl) dl.textContent = status === 'waiting' ? '상장일' : '날짜 (청약/매도일)';
     updatePreview(form);
   }
 
@@ -1316,10 +1364,13 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       if (!pf || !String(pf.value).trim()) { toast('최종이익을 적어 주세요'); if (pf) pf.focus(); return '최종이익 없음'; }
       return '';
     }
-    if (!rec.ipoPrice) { toast('공모가를 적어 주세요'); focusField(form, 'ipoPrice'); return '공모가 없음'; }
-    if (!rec.qty) { toast('배정 주수를 적어 주세요'); focusField(form, 'qty'); return '주수 없음'; }
-    var amount = rec.sellMode === 'total' ? rec.sellTotal : rec.sellPrice * rec.qty;
-    if (!amount) { toast('매도 금액을 적어 주세요'); focusField(form, rec.sellMode === 'total' ? 'sellTotal' : 'sellPrice'); return '매도금액 없음'; }
+    if (!rec.ipoPrice) { toast('1주당 가격을 적어 주세요'); focusField(form, 'ipoPrice'); return '1주당 가격 없음'; }
+    if (!rec.qty) { toast('배정 수량을 적어 주세요'); focusField(form, 'qty'); return '배정 수량 없음'; }
+    if (rec.sellMode === 'price') {
+      if (!(rec.sellPrice * rec.qty)) { toast('1주 매도가를 적어 주세요'); focusField(form, 'sellPrice'); return '매도가 없음'; }
+    } else if (!rec.sellTotal) {
+      toast('입금된 금액을 적어 주세요'); focusField(form, 'sellTotal'); return '입금된 금액 없음';
+    }
     return '';
   }
 
@@ -1390,7 +1441,8 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   }
 
   function csvText() {
-    var head = ['날짜', '상태', '종목명', '증권사', '주수', '공모가', '매도금액', '청약수수료', '매도수수료·세금', '최종이익', '수익률(%)', '메모'];
+    var head = ['날짜', '상태', '종목명', '증권사', '청약증거금', '청약수량', '배정수량', '공모주환불금액',
+      '1주당가격', '청약수수료', '매도수수료·세금', '입금된금액', '최종이익', '수익률(%)', '메모'];
     var lines = [head.map(csvCell).join(',')];
     sortRecords(state.records).reverse().forEach(function (r) {
       var auto = r.mode === 'auto';
@@ -1402,11 +1454,14 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
         waiting ? '상장대기' : '매도완료',
         r.name,
         r.broker,
+        (auto && r.deposit) ? r.deposit : '',
+        (auto && r.subQty) ? r.subQty : '',
         auto ? r.qty : '',
+        (auto && !waiting && c.refund > 0) ? c.refund : '',
         auto ? r.ipoPrice : '',
-        (auto && !waiting) ? c.sellAmount : '',
         auto ? r.subFee : '',
         (auto && !waiting) ? c.cost : '',
+        (auto && !waiting) ? c.sellAmount : '',
         waiting ? '' : recProfit(r),
         rate == null ? '' : (Math.round(rate * 100) / 100).toFixed(2),
         r.note
@@ -1540,8 +1595,10 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       var d = recordDraft(r);
       d.status = 'sold';
       d.mode = 'auto';
+      d.sellMode = 'deposit';
+      d.costMode = 'none';
       d.date = todayKey();
-      openSheet({ type: 'record', title: '매도 완료 입력', rec: d, recId: r.id, createdAt: r.createdAt, focus: 'sellPrice' });
+      openSheet({ type: 'record', title: '매도 완료 입력', rec: d, recId: r.id, createdAt: r.createdAt, focus: 'sellTotal' });
     },
     saveRecord: function () { saveRecord(); },
     askDelete: function () {
@@ -1610,6 +1667,19 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   /* ------------------------------------------------------------------ *
    *  이벤트
    * ------------------------------------------------------------------ */
+  function pressChip(form, group, value) {
+    if (!form) return false;
+    var b = form.querySelector('[data-chip="' + group + '"][data-' + group + '="' + value + '"]');
+    if (!b) return false;
+    var row = b.parentNode;
+    if (row) {
+      Array.prototype.forEach.call(row.querySelectorAll('[data-chip="' + group + '"]'), function (x) {
+        x.setAttribute('aria-pressed', String(x === b));
+      });
+    }
+    return true;
+  }
+
   function onChip(btn) {
     var group = btn.dataset.chip;
     var row = btn.parentNode;
@@ -1618,6 +1688,10 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       b.setAttribute('aria-pressed', String(b === btn));
     });
     var form = btn.closest('form');
+    if (form && group === 'sellmode') {
+      /* 입금된 금액은 이미 수수료·세금이 빠진 값 → 알맞은 매도 비용 방식을 같이 골라 준다 */
+      pressChip(form, 'costmode', btn.dataset.sellmode === 'price' ? 'auto' : 'none');
+    }
     if (form) syncFormState(form);
   }
 
