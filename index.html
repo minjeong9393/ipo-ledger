@@ -473,7 +473,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
    *  상수
    * ------------------------------------------------------------------ */
   var STORE_KEY = 'ipo_ledger_v1';
-  var APP_VER = '1.4.0';
+  var APP_VER = '1.5.0';
   /* 매도 수수료·세금 자동 계산 기본값 (0.2%) */
   var COST_RATE = 0.002;
 
@@ -602,6 +602,8 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     r.broker = String(raw.broker || '').trim().slice(0, 30) || '기타';
     r.status = raw.status === 'waiting' ? 'waiting' : 'sold';
     r.date = isDateKey(raw.date) ? String(raw.date) : todayKey();
+    /* 청약일(선택) — 없던 기록·백업도 그대로 불러온다 (빈 값이면 표시하지 않는다) */
+    r.subDate = isDateKey(raw.subDate) ? String(raw.subDate) : '';
     r.note = String(raw.note || '').slice(0, 300);
     r.mode = raw.mode === 'auto' ? 'auto' : 'quick';
     r.ipoPrice = Math.max(0, int(raw.ipoPrice));
@@ -874,11 +876,12 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     '</div>';
   }
 
-  /* 기록 카드의 상세 줄 — 배정 수량·증거금·환불·입금·수수료를 한 줄로 (자동 계산 기록만) */
+  /* 기록 카드의 상세 줄 — 청약일·배정 수량·증거금·환불·입금·수수료를 한 줄로 (청약일은 어느 입력 방식이든) */
   function cardDetailHtml(r) {
-    if (r.mode !== 'auto') return '';
-    var c = calcAuto(r);
     var parts = [];
+    if (isDateKey(r.subDate)) parts.push('청약 ' + fmtDate(r.subDate));
+    if (r.mode !== 'auto') return parts.length ? '<div class="rdetail">' + parts.join(' · ') + '</div>' : '';
+    var c = calcAuto(r);
     /* 1주당 가격만 있던 옛 기록은 그때 칸 이름 그대로 보여 준다 */
     if (c.ipo > 0 && c.deposit === 0) parts.push('1주당 ' + comma(c.ipo) + '원');
     if (c.qty > 0) parts.push(c.qty + '주');
@@ -917,7 +920,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       '<div class="rline1"><span class="rname">' + esc(r.name) + '</span>' + right + '</div>' +
       '<div class="rline2">' + meta +
         '<span class="rbroker">' + esc(r.broker || '기타') + '</span>' +
-        '<span class="rdate">' + (waiting ? '상장 ' : '') + fmtDate(r.date) + '</span>' +
+        '<span class="rdate">상장 ' + fmtDate(r.date) + '</span>' +
         qtyHtml +
       '</div>' +
       cardDetailHtml(r) +
@@ -1100,7 +1103,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   function recordDraft(r) {
     if (r) {
       return {
-        id: r.id, name: r.name, broker: r.broker, status: r.status, date: r.date, note: r.note,
+        id: r.id, name: r.name, broker: r.broker, status: r.status, date: r.date, subDate: r.subDate || '', note: r.note,
         mode: r.mode, ipoPrice: r.ipoPrice, qty: r.qty, deposit: r.deposit, refund: r.refund,
         subQty: r.subQty, sellMode: r.sellMode, sellPrice: r.sellPrice, sellTotal: r.sellTotal,
         subFee: r.subFee, costMode: r.costMode, sellCost: r.sellCost, profit: r.profit
@@ -1108,7 +1111,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     }
     /* 새 기록의 수수료는 비워 둔다 — 적은 숫자 그대로가 수수료가 된다 (기본값 없음) */
     return {
-      id: '', name: '', broker: BROKERS[0], status: 'sold', date: todayKey(), note: '',
+      id: '', name: '', broker: BROKERS[0], status: 'sold', date: todayKey(), subDate: '', note: '',
       mode: 'auto', ipoPrice: 0, qty: 0, deposit: 0, refund: 0, subQty: 0,
       sellMode: 'deposit', sellPrice: 0, sellTotal: 0,
       subFee: 0, costMode: 'none', sellCost: 0, profit: 0
@@ -1186,8 +1189,11 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       chipHtml('status', 'waiting', '상장 대기', isWaiting) +
       '</div>';
 
-    h += '<label class="lbl" for="fDate"><span class="date-lbl">' + (isWaiting ? '상장일' : '날짜 (청약/매도일)') + '</span></label>' +
-      '<input id="fDate" class="field" type="date" name="date" value="' + esc(d.date) + '" aria-label="날짜">';
+    /* 날짜 칸은 상태와 상관없이 「상장일」 — 청약일은 따로 적는다(선택) */
+    h += '<label class="lbl" for="fDate">상장일</label>' +
+      '<input id="fDate" class="field" type="date" name="date" value="' + esc(d.date) + '" aria-label="상장일">' +
+      '<label class="lbl" for="fSubDate">청약일 (선택)</label>' +
+      '<input id="fSubDate" class="field" type="date" name="subDate" value="' + esc(d.subDate || '') + '" aria-label="청약일">';
 
     h += '<span class="lbl">증권사</span><div class="chiprow">' +
       BROKERS.map(function (b) { return chipHtml('broker', b, esc(b), b === brokerPick); }).join('') +
@@ -1290,6 +1296,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       broker: broker,
       status: status,
       date: isDateKey(f('date')) ? f('date') : todayKey(),
+      subDate: isDateKey(f('subDate')) ? f('subDate') : '',
       note: String(f('note') || '').trim().slice(0, 300),
       mode: mode,
       ipoPrice: ipo,
@@ -1403,8 +1410,6 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
     var broker = activeChip(form, 'broker') || BROKERS[0];
     var cb = form.querySelector('.custom-broker');
     if (cb) cb.classList.toggle('on', broker === '기타');
-    var dl = form.querySelector('.date-lbl');
-    if (dl) dl.textContent = status === 'waiting' ? '상장일' : '날짜 (청약/매도일)';
     updatePreview(form);
   }
 
@@ -1500,7 +1505,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
   }
 
   function csvText() {
-    var head = ['날짜', '상태', '종목명', '증권사', '청약증거금', '청약수량', '배정수량', '공모주환불금액',
+    var head = ['상장일', '청약일', '상태', '종목명', '증권사', '청약증거금', '청약수량', '배정수량', '공모주환불금액',
       '1주당가격', '청약수수료', '매도수수료·세금', '입금된금액', '최종이익', '수익률(%)', '메모'];
     var lines = [head.map(csvCell).join(',')];
     sortRecords(state.records).reverse().forEach(function (r) {
@@ -1510,6 +1515,7 @@ textarea.field{height:auto;min-height:64px;padding:10px 12px;line-height:1.5;res
       var rate = recRate(r);
       lines.push([
         r.date,
+        r.subDate || '',
         waiting ? '상장대기' : '매도완료',
         r.name,
         r.broker,

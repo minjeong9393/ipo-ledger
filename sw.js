@@ -1,7 +1,7 @@
 /* 공모주 가계부 서비스워커 — 앱 껍데기만 캐시해서 오프라인 실행·홈 화면 설치를 돕습니다.
  * 기록은 브라우저 localStorage 에만 있고 여기에는 저장하지 않습니다.
  * 화면(HTML)과 매니페스트는 네트워크 우선이라 새 버전이 바로 반영됩니다. */
-var CACHE = 'ipo-ledger-v6';
+var CACHE = 'ipo-ledger-v7';
 var ASSETS = ['./', './index.html', './manifest.webmanifest', './favicon.png?v=6', './icon-192.png?v=6', './icon-512.png?v=6'];
 
 self.addEventListener('install', function (e) {
