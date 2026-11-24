@@ -799,7 +799,7 @@ function xlBuild(book) {
    *  상수
    * ------------------------------------------------------------------ */
   var STORE_KEY = 'ipo_ledger_v1';
-  var APP_VER = '1.6.0';
+  var APP_VER = '1.7.0';
   /* 매도 수수료·세금 자동 계산 기본값 (0.2%) */
   var COST_RATE = 0.002;
 
@@ -899,6 +899,21 @@ function xlBuild(book) {
       sellAmount: sellAmount, sub: sub, cost: cost,
       gross: gross, totalCost: totalCost, profit: profit, invest: invest, rate: rate
     };
+  }
+
+  /* 1주당 공모가 = 배정 원금 ÷ 배정 수량 — 입력 칸 없이 계산 결과로만 보여 준다.
+   *   · 배정 수량이 0이거나 배정 원금이 0원이면 보여 주지 않는다 (null)
+   *   · 1주당 가격 칸만 있던 옛 기록은 그때 적어 둔 1주당 가격을 그대로 쓰므로(null) 카드의 「1주당 …원」 줄이 그 몫을 한다
+   *   · 딱 나누어떨어지지 않으면 반올림한 값 앞에 「약」을 붙인다 */
+  function unitPriceOf(c) {
+    if (!(c.qty > 0 && c.buy > 0)) return null;
+    if (c.ipo > 0 && c.deposit === 0) return null;
+    return { value: Math.round(c.buy / c.qty), approx: c.buy % c.qty !== 0 };
+  }
+  function unitPriceLabel(c) {
+    var u = unitPriceOf(c);
+    if (!u) return '';
+    return (u.approx ? '약 ' : '') + comma(u.value) + '원';
   }
 
   function recProfit(r) {
@@ -1210,6 +1225,9 @@ function xlBuild(book) {
     var c = calcAuto(r);
     /* 1주당 가격만 있던 옛 기록은 그때 칸 이름 그대로 보여 준다 */
     if (c.ipo > 0 && c.deposit === 0) parts.push('1주당 ' + comma(c.ipo) + '원');
+    /* 배정 원금 ÷ 배정 수량으로 1주당 공모가를 함께 (옛 기록의 「1주당」 줄과 겹치지 않게) */
+    var up = unitPriceLabel(c);
+    if (up) parts.push('공모가 ' + up);
     if (c.qty > 0) parts.push(c.qty + '주');
     if (c.deposit > 0) parts.push('증거금 ' + comma(c.deposit) + '원');
     if (c.refund > 0) parts.push('환불 ' + comma(c.refund) + '원');
@@ -1669,6 +1687,7 @@ function xlBuild(book) {
         (cw.deposit > 0 ? '<div class="pvrow"><span>청약 증거금</span><b>' + wonPlain(cw.deposit) + '</b></div>' : '') +
         (cw.refund > 0 ? '<div class="pvrow"><span>환불 금액</span><b>' + wonPlain(cw.refund) + '</b></div>' : '') +
         '<div class="pvrow"><span>' + invLabel + '</span><b>' + wonPlain(inv) + '</b></div>' +
+        (unitPriceLabel(cw) ? '<div class="pvrow"><span>1주당 공모가 (배정원금÷수량)</span><b>' + unitPriceLabel(cw) + '</b></div>' : '') +
         '<div class="pvrow"><span>수수료</span><b>' + wonPlain(r.subFee) + '</b></div>' +
         '<div class="pvtotal"><span>투입금액</span><b>' + wonPlain(inv + r.subFee) + '</b></div>' +
         '<p class="pvhint">매도하고 「매도 완료 입력」을 누르면 이익이 확정돼요.</p>';
@@ -1703,8 +1722,10 @@ function xlBuild(book) {
     } else if (c.deposit > 0 && !int(r.refund)) {
       pvHint = '<p class="pvhint">환불 금액을 비워 두면 배정 원금을 청약 증거금 전체로 계산해요.</p>';
     }
+    var unitPv = unitPriceLabel(c);
     box.innerHTML = '<span class="pvlab">자동 계산</span>' +
       depRows +
+      (unitPv ? '<div class="pvrow"><span>1주당 공모가 (배정원금÷수량)</span><b>' + unitPv + '</b></div>' : '') +
       '<div class="pvrow"><span>' + (r.sellMode === 'price' ? '매도금액' : '입금된 금액') + '</span><b>' +
         wonPlain(c.sellAmount) + '</b></div>' +
       '<div class="pvrow"><span>세전차익</span><b class="' + cls(c.gross) + '">' + won(c.gross) + '</b></div>' +
@@ -2276,6 +2297,7 @@ function xlBuild(book) {
       todayKey: todayKey, dkey: dkey, parseKey: parseKey, isDateKey: isDateKey,
       comma: comma, won: won, wonPlain: wonPlain, pct: pct, num: num, int: int,
       fmtDate: fmtDate, fmtMonthKey: fmtMonthKey, calcAuto: calcAuto,
+      unitPriceOf: unitPriceOf, unitPriceLabel: unitPriceLabel,
       recProfit: recProfit, recRate: recRate
     },
     periodSummary: periodSummary,
